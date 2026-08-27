@@ -2,48 +2,140 @@ import os
 import requests
 import pandas as pd
 import streamlit as st
-from PIL import Image
 
+# ==========================================
+# 1. PAGE CONFIGURATION
+# ==========================================
+st.set_page_config(
+    page_title="Product Defect Classifier",
+    page_icon="🔍",
+    layout="wide"
+)
+
+# ==========================================
+# 2. PATHS & LOG INITIALIZATION (OPTION A)
+# ==========================================
 API_URL = "http://127.0.0.1:8000/predict"
+LOG_FILE_PATH = os.path.join("logs", "experiment_history.csv")
+EXACT_COLUMNS = ["File Name", "Model Used", "Prediction", "Confidence (in %)"]
 
-st.set_page_config(page_title="Product Defect Classifier", page_icon="🔍")
+# Ensure logs directory exists and create a fresh CSV with exact requested columns
+os.makedirs("logs", exist_ok=True)
+if not os.path.exists(LOG_FILE_PATH):
+    empty_df = pd.DataFrame(columns=EXACT_COLUMNS)
+    empty_df.to_csv(LOG_FILE_PATH, index=False)
 
-st.title("🔍 Product Defect Classifier")
-st.write("Upload an image to detect manufacturing defects in real-time.")
+# ==========================================
+# 3. DASHBOARD HEADER
+# ==========================================
+st.title("🔍 Product Defect Classification System")
+st.markdown("Automated quality control inspection dashboard with live log monitoring.")
 
-# --- SECTION 1: Inference & Prediction ---
-model_choice = st.selectbox("Select Model Architecture", ["ResNet-18 (Transfer)", "Custom CNN"])
-model_type_param = "resnet" if "ResNet" in model_choice else "cnn"
+# ==========================================
+# 4. SECTION 1: LIVE INFERENCE
+# ==========================================
+st.subheader("🎯 Real-Time Quality Inspection")
+col1, col2 = st.columns([1, 1])
 
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+with col1:
+    model_choice = st.selectbox(
+        "Select Model Architecture",
+        options=["resnet", "cnn"],
+        format_func=lambda x: "ResNet" if x == "resnet" else "CNN"
+    )
+    uploaded_file = st.file_uploader("Choose a product photo...", type=["jpg", "jpeg", "png", "bmp", "webp"])
+    if uploaded_file is not None:
+        st.image(uploaded_file, caption="Uploaded Image Preview", use_container_width=True)
 
-if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Image", use_container_width=True)
+with col2:
+    if uploaded_file is not None:
+        if st.button("Run Inspection", type="primary", use_container_width=True):
+            with st.spinner("Analyzing image..."):
+                try:
+                    uploaded_file.seek(0)
+                    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+                    params = {"model_type": model_choice}
+                    
+                    headers = {'Connection': 'close'}
+                    response = requests.post(API_URL, files=files, params=params, headers=headers, timeout=15)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        raw_result = str(data.get("prediction", "")).upper()
+                        
+                        # Standardize display result to OK or Defective
+                        prediction_result = "OK" if raw_result == "OK" else "Defective"
+                        confidence = data.get("confidence_percentage", 0.0)
+                        model_used = "ResNet" if model_choice == "resnet" else "CNN"
+                        filename = uploaded_file.name
 
-    if st.button("Run Prediction"):
-        with st.spinner("Analyzing image..."):
-            files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-            try:
-                response = requests.post(f"{API_URL}?model_type={model_type_param}", files=files)
-                if response.status_code == 200:
-                    result = response.json()
-                    st.success("Analysis Complete!")
-                    st.write(f"**Prediction:** {result['prediction'].upper()}")
-                    st.write(f"**Confidence:** {result['confidence_percentage']}%")
-                    st.write(f"**Model Used:** {result['model_used']}")
-                else:
-                    st.error("Error communicating with prediction server.")
-            except Exception as e:
-                st.error(f"Failed to connect to backend: {e}")
+                        if prediction_result == "OK":
+                            st.success(f"**Status:** {prediction_result} — Passed Quality Control")
+                        else:
+                            st.error(f"**Status:** {prediction_result} — Defect Detected")
+                        
+                        st.metric("Confidence Score", f"{confidence}%")
+                        st.info(f"**Active Model:** {model_used}")
 
-# --- SECTION 2: Week 3 Experiment Tracking ---
-st.markdown("---")
-st.subheader("📊 Experiment Tracking History")
+                        # Save log entry with exact column schema
+                        new_log = pd.DataFrame([{
+                            "File Name": filename,
+                            "Model Used": model_used,
+                            "Prediction": prediction_result,
+                            "Confidence (in %)": f"{confidence}%"
+                        }])
+                        new_log.to_csv(LOG_FILE_PATH, mode='a', header=False, index=False)
+                    else:
+                        st.error(f"API Error ({response.status_code}): {response.text}")
+                
+                except requests.exceptions.Timeout:
+                    st.error("Request timed out. Please restart your FastAPI backend server.")
+                except requests.exceptions.ConnectionError:
+                    st.error("Cannot connect to backend. Verify `uvicorn serving.api:app --reload` is running on port 8000.")
 
-csv_path = "logs/experiment_history.csv"
-if os.path.exists(csv_path):
-    df = pd.read_csv(csv_path)
-    st.dataframe(df, use_container_width=True)
-else:
-    st.info("No experiment logs found yet. Run 'python log_experiments.py' to generate.")
+st.divider()
+
+# ==========================================
+# 5. SECTION 2: MODEL BENCHMARK MATRIX
+# ==========================================
+st.subheader("📊 Model Architecture Benchmark")
+st.caption("Side-by-side performance comparison across training runs.")
+
+comparison_data = {
+    "Model Name": ["Custom CNN Baseline", "ResNet-18 (Transfer Learning)"],
+    "Epochs": [5, 5],
+    "Batch Size": [32, 32],
+    "Learning Rate": [0.0001, 0.0001],
+    "Accuracy (%)": [97.37, 99.47],
+    "Validation Loss": [0.0812, 0.0145],
+    "Status": ["Evaluated Baseline", "Champion (Deployed)"]
+}
+
+st.dataframe(pd.DataFrame(comparison_data), use_container_width=True, hide_index=True)
+
+st.divider()
+
+# ==========================================
+# 6. SECTION 3: LOG MONITORING (SEPARATE)
+# ==========================================
+st.subheader("📋 Log Monitoring")
+
+if os.path.exists(LOG_FILE_PATH):
+    logs_df = pd.read_csv(LOG_FILE_PATH)
+
+    if not logs_df.empty:
+        log_col1, log_col2 = st.columns([3, 1])
+        with log_col1:
+            st.caption(f"Total Inspection Records: **{len(logs_df)}**")
+        with log_col2:
+            st.download_button(
+                label="📥 Download Log (CSV)",
+                data=logs_df.to_csv(index=False).encode('utf-8'),
+                file_name="inspection_logs.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+        st.dataframe(logs_df.sort_index(ascending=False), use_container_width=True, hide_index=True)
+    else:
+        st.info("No inspection logs recorded yet. Run an inspection above to log data here.")
