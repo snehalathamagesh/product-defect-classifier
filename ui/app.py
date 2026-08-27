@@ -107,8 +107,7 @@ comparison_data = {
     "Batch Size": [32, 32],
     "Learning Rate": [0.0001, 0.0001],
     "Accuracy (%)": [97.37, 99.47],
-    "Validation Loss": [0.0812, 0.0145],
-    "Status": ["Evaluated Baseline", "Champion (Deployed)"]
+    "Validation Loss": [0.0812, 0.0145]
 }
 
 st.dataframe(pd.DataFrame(comparison_data), use_container_width=True, hide_index=True)
